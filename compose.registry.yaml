@@ -1,0 +1,17 @@
+# Uses a published image; no source code or Node.js installation required.
+services:
+  leafdock:
+    image: ${LEAFDOCK_IMAGE:-ghcr.io/tichara1/leafdock:latest}
+    ports:
+      - "127.0.0.1:${LEAFDOCK_PORT:-3000}:3000"
+    environment:
+      AZURE_DEVOPS_PAT: ${AZURE_DEVOPS_PAT:-}
+      AZURE_DEVOPS_ORG: ${AZURE_DEVOPS_ORG:-}
+      LEAFDOCK_MCP_TOKEN: ${LEAFDOCK_MCP_TOKEN:-}
+      MCP_ALLOW_PUBLISH: ${MCP_ALLOW_PUBLISH:-false}
+      DATA_DIR: /app/data
+    volumes:
+      - leafdock-data:/app/data
+    restart: unless-stopped
+volumes:
+  leafdock-data:

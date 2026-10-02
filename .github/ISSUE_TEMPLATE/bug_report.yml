@@ -1,0 +1,20 @@
+name: Bug report
+description: Report reproducible behavior using the bundled demo when possible.
+body:
+  - type: markdown
+    attributes:
+      value: Never include PATs, MCP tokens, private PR contents, or real review exports.
+  - type: input
+    id: version
+    attributes:
+      label: Version and environment
+      placeholder: v1.0.0, Docker, macOS, Chrome
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include expected and actual behavior. Use demo URLs rather than private PR links.
+    validations:
+      required: true

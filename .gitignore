@@ -1,0 +1,14 @@
+node_modules/
+dist/
+data/
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+coverage/
+public/THIRD_PARTY_NOTICES.txt
+test-results/
+playwright-report/
+.superdesign/tmp/

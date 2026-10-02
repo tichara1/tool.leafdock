@@ -1,0 +1,58 @@
+{
+  "name": "leafdock",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A local Azure DevOps documentation pull request viewer with Mermaid and MCP.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tichara1/tool.leafdock.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tichara1/tool.leafdock/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"node --watch server/index.js\" \"vite --host 127.0.0.1\"",
+    "build": "npm run notices && vite build",
+    "notices": "node scripts/third-party-notices.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "start": "node server/index.js",
+    "test": "node --test server/*.test.js scripts/*.test.js",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/manrope": "^5.3.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "diff": "^8.0.2",
+    "dompurify": "^3.3.0",
+    "express": "^5.1.0",
+    "katex": "^0.16.22",
+    "lucide-react": "^0.468.0",
+    "mermaid": "^11.12.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "rehype-katex": "^7.0.1",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "rehype-slug": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "concurrently": "^9.2.1",
+    "prettier": "3.9.9",
+    "vite": "^7.2.0",
+    "yaml": "2.9.1"
+  }
+}

@@ -1,0 +1,17 @@
+services:
+  leafdock:
+    build: .
+    image: leafdock:local
+    ports:
+      - "127.0.0.1:${LEAFDOCK_PORT:-3000}:3000"
+    environment:
+      AZURE_DEVOPS_PAT: ${AZURE_DEVOPS_PAT:-}
+      AZURE_DEVOPS_ORG: ${AZURE_DEVOPS_ORG:-}
+      DATA_DIR: /app/data
+      LEAFDOCK_MCP_TOKEN: ${LEAFDOCK_MCP_TOKEN:-}
+      MCP_ALLOW_PUBLISH: ${MCP_ALLOW_PUBLISH:-false}
+    volumes:
+      - leafdock-data:/app/data
+    restart: unless-stopped
+volumes:
+  leafdock-data:
