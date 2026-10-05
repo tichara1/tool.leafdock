@@ -30,7 +30,7 @@
     "@fontsource/dm-sans": "^5.3.0",
     "@fontsource/manrope": "^5.3.0",
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "diff": "^8.0.2",
+    "diff": "^9.0.0",
     "dompurify": "^3.3.0",
     "express": "^5.1.0",
     "highlight.js": "^11.11.1",
