@@ -217,6 +217,7 @@ function Gallery() {
           <div className="gallery-diff">
             <SourceDiff
               file={demoFiles["/docs/architecture.md"]}
+              path="/docs/architecture.md"
               unified={unified}
               onQuote={(q) =>
                 setStatus("Line quote " + q.line + ": " + q.quote)

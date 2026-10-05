@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import {
   AppError,
   parsePrUrl,
@@ -10,20 +11,190 @@ import {
   readItem,
   azure,
   checkPr,
+  isEntraToken,
 } from "./azure.js";
 import { Store, reviewKey } from "./store.js";
 import { demoPr, demoFiles } from "./demo.js";
 import { installMcp } from "./mcp.js";
 import { boundedBytes, rewriteRepoCss } from "./assets.js";
 
+export const USAGE = `Usage: npm start -- [options] [pr_url] [pat]
+
+Options:
+  --url <url>, -u       Azure DevOps Pull Request URL
+  --pat <token>, -p     Azure DevOps Personal Access Token (or Entra token)
+  --org <name>, -o      Azure DevOps organization restriction
+  --port <number>       Port to listen on (default: 3000)
+  -h, --help            Show help
+
+Examples:
+  npm start -- https://dev.azure.com/org/proj/_git/repo/pullrequest/123 my-pat
+  npm start -- my-pat
+  npm start -- --url https://dev.azure.com/... --pat my-pat
+`;
+
+export function isPrUrl(str) {
+  if (typeof str !== "string") return false;
+  const s = str.trim();
+  return (
+    /^https?:\/\//i.test(s) ||
+    s.includes("dev.azure.com") ||
+    s.includes(".visualstudio.com") ||
+    s.includes("pullrequest")
+  );
+}
+
+export function cleanToken(str) {
+  if (typeof str !== "string") return "";
+  let s = str.trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+export function parseCliArgs(args = process.argv.slice(2)) {
+  let url = "";
+  let pat = "";
+  let org = "";
+  let port;
+  let help = false;
+  const positionals = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "-h" || arg === "--help" || arg === "help") {
+      help = true;
+    } else if (
+      arg.startsWith("--url=") ||
+      arg.startsWith("--pr=") ||
+      arg.startsWith("url=") ||
+      arg.startsWith("pr=")
+    ) {
+      url = arg.split("=").slice(1).join("=");
+    } else if (arg === "--url" || arg === "-u" || arg === "--pr") {
+      url = args[++i] || "";
+    } else if (
+      arg.startsWith("--pat=") ||
+      arg.startsWith("--token=") ||
+      arg.startsWith("pat=") ||
+      arg.startsWith("token=")
+    ) {
+      pat = arg.split("=").slice(1).join("=");
+    } else if (
+      arg === "--pat" ||
+      arg === "-p" ||
+      arg === "-pat" ||
+      arg === "--token" ||
+      arg === "-t"
+    ) {
+      pat = args[++i] || "";
+    } else if (arg.startsWith("--org=") || arg.startsWith("org=")) {
+      org = arg.split("=").slice(1).join("=");
+    } else if (arg === "--org" || arg === "-o") {
+      org = args[++i] || "";
+    } else if (arg.startsWith("--port=") || arg.startsWith("port=")) {
+      port = Number(arg.split("=")[1]);
+    } else if (arg === "--port") {
+      port = Number(args[++i]);
+    } else if (!arg.startsWith("-")) {
+      positionals.push(arg);
+    }
+  }
+
+  for (const pos of positionals) {
+    if (isPrUrl(pos)) {
+      if (!url) url = pos;
+    } else {
+      if (!pat) pat = pos;
+      else if (!url) url = pos;
+    }
+  }
+
+  return {
+    url: cleanToken(url),
+    pat: cleanToken(pat),
+    org: cleanToken(org),
+    port: Number.isInteger(port) && port > 0 ? port : undefined,
+    help,
+  };
+}
+
+export function loadEnv(envPath = ".env") {
+  if (typeof process.loadEnvFile === "function") {
+    try {
+      process.loadEnvFile(envPath);
+    } catch (e) {
+      if (e?.code !== "ENOENT") throw e;
+    }
+  }
+}
+
 export function createApp({
   dataDir = process.env.DATA_DIR || "data",
-  envPat = process.env.AZURE_DEVOPS_PAT || "",
-  envOrg = process.env.AZURE_DEVOPS_ORG || "",
+  envPat = cleanToken(
+    process.env.AZURE_DEVOPS_PAT ||
+      process.env.AZURE_PAT ||
+      process.env.AZURE_DEVOPS_TOKEN ||
+      process.env.PAT ||
+      "",
+  ),
+  envOrg = cleanToken(
+    process.env.AZURE_DEVOPS_ORG || process.env.AZURE_ORG || "",
+  ),
+  initialPrUrl = cleanToken(
+    process.env.AZURE_DEVOPS_PR ||
+      process.env.AZURE_DEVOPS_PR_URL ||
+      process.env.PR_URL ||
+      process.env.PR ||
+      "",
+  ),
 } = {}) {
+  envPat = cleanToken(envPat);
+  envOrg = cleanToken(envOrg);
+  initialPrUrl = cleanToken(initialPrUrl);
   const app = express(),
     sessions = new Map(),
     store = new Store(dataDir);
+  let defaultSession = null;
+  let defaultSessionPromise = null;
+
+  async function ensureDefaultSession() {
+    if (defaultSession) return defaultSession;
+    if (!initialPrUrl) return null;
+    if (!defaultSessionPromise) {
+      defaultSessionPromise = (async () => {
+        const pr = parsePrUrl(initialPrUrl);
+        const token =
+          envPat && (!envOrg || pr.org.toLowerCase() === envOrg.toLowerCase())
+            ? envPat
+            : "";
+        if (!token) return null;
+        const loaded = await loadPr(pr, token);
+        const review = await store.prepare(loaded);
+        const credentials = { [pr.org.toLowerCase()]: token };
+        const id = randomUUID();
+        const s = {
+          pr: loaded,
+          token,
+          touched: Date.now(),
+          credentials,
+        };
+        sessions.set(id, s);
+        defaultSession = s;
+        return s;
+      })();
+    }
+    try {
+      return await defaultSessionPromise;
+    } catch (err) {
+      defaultSessionPromise = null;
+      throw err;
+    }
+  }
   app.disable("x-powered-by");
   app.use((req, res, next) => {
     const host = req.hostname;
@@ -107,7 +278,11 @@ export function createApp({
     }),
   );
   app.get("/api/config", (_, res) =>
-    res.json({ hasPat: !!envPat, organization: envOrg }),
+    res.json({
+      hasPat: !!envPat,
+      organization: envOrg,
+      ...(initialPrUrl ? { initialPrUrl } : {}),
+    }),
   );
   app.post("/api/pat-link", (req, res) => {
     const pr = parsePrUrl(req.body.url);
@@ -182,6 +357,23 @@ export function createApp({
     res.json({ pr: loaded, review });
   });
   app.get("/api/pr", async (req, res) => {
+    if (!req.session && initialPrUrl) {
+      const def = await ensureDefaultSession().catch(() => null);
+      if (def) {
+        req.session = def;
+        const id = [...sessions.entries()].find(([, s]) => s === def)?.[0];
+        if (id) {
+          req.sessionId = id;
+          res.cookie(req.cookieName, id, {
+            httpOnly: true,
+            sameSite: "strict",
+            secure: req.secure,
+            maxAge: 8 * 3600000,
+            path: "/",
+          });
+        }
+      }
+    }
     const { pr } = await readySession(req);
     res.json({ pr, review: await store.read(reviewKey(pr)) });
   });
@@ -263,8 +455,7 @@ export function createApp({
     };
     if (!filePath.startsWith("/")) throw new AppError("Invalid path.");
     if (pr.demo) {
-      if (!demoFiles[filePath])
-        throw new AppError("Soubor nebyl nalezen.", 404);
+      if (!demoFiles[filePath]) throw new AppError("File not found.", 404);
       const contents = { ...demoFiles[filePath] };
       if (
         pr.after.startsWith("demo-update-") &&
@@ -318,7 +509,7 @@ export function createApp({
       ".ico": "image/x-icon",
     }[path.extname(assetPath).toLowerCase()];
     if (!mime) throw new AppError("This asset type is not supported.", 415);
-    if (pr.demo) throw new AppError("Asset nebyl nalezen.", 404);
+    if (pr.demo) throw new AppError("Asset not found.", 404);
     const r = await readItem(
       pr,
       token,
@@ -489,7 +680,35 @@ export function createApp({
           ).json(),
     );
   });
-  installMcp(app, { sessions, dataDir });
+  const mcp = installMcp(app, { sessions, dataDir });
+  // Replaces the environment token without a restart (scripts/devops-token.mjs --push).
+  // Guarded by the MCP bearer token; the token is kept in memory only.
+  app.put("/api/admin/token", (req, res) => {
+    if (!mcp.authorized(req))
+      return res.status(401).json({ error: "MCP token required" });
+    const { token, organization = envOrg } = req.body || {};
+    if (
+      typeof token !== "string" ||
+      !token.trim() ||
+      typeof organization !== "string"
+    )
+      throw new AppError("Provide a token and an optional organization.");
+    const previous = envPat;
+    envPat = token.trim();
+    envOrg = organization.trim();
+    // Open sessions that used the old environment token switch to the new one.
+    if (previous)
+      for (const s of sessions.values()) {
+        if (s.token === previous) s.token = envPat;
+        for (const [org, value] of Object.entries(s.credentials || {}))
+          if (value === previous) s.credentials[org] = envPat;
+      }
+    if (!defaultSession) defaultSessionPromise = null;
+    res.json({
+      organization: envOrg,
+      type: isEntraToken(envPat) ? "entra" : "pat",
+    });
+  });
   app.use(express.static(path.resolve("dist")));
   app.get("/{*path}", (_, res) =>
     res.sendFile(path.resolve("dist/index.html")),
@@ -504,11 +723,66 @@ export function createApp({
     });
   });
   app.locals.sessions = sessions;
+  app.locals.ensureDefaultSession = ensureDefaultSession;
   return app;
 }
-if (process.argv[1] === fileURLToPath(import.meta.url))
-  createApp().listen(Number(process.env.PORT) || 3000, "0.0.0.0", () =>
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  loadEnv();
+  const cli = parseCliArgs();
+  if (cli.help) {
+    console.log(USAGE);
+    process.exit(0);
+  }
+  const port =
+    cli.port ||
+    Number(process.env.LEAFDOCK_PORT) ||
+    Number(process.env.PORT) ||
+    3000;
+  const envPat =
+    cli.pat ||
+    cleanToken(
+      process.env.AZURE_DEVOPS_PAT ||
+        process.env.AZURE_PAT ||
+        process.env.AZURE_DEVOPS_TOKEN ||
+        process.env.PAT ||
+        "",
+    );
+  const envOrg =
+    cli.org ||
+    cleanToken(process.env.AZURE_DEVOPS_ORG || process.env.AZURE_ORG || "");
+  const initialPrUrl =
+    cli.url ||
+    cleanToken(
+      process.env.AZURE_DEVOPS_PR ||
+        process.env.AZURE_DEVOPS_PR_URL ||
+        process.env.PR_URL ||
+        process.env.PR ||
+        "",
+    );
+
+  const app = createApp({ envPat, envOrg, initialPrUrl });
+  // Express 5 passes listen errors (e.g. EADDRINUSE) to this callback.
+  app.listen(port, "0.0.0.0", (error) => {
+    if (error) {
+      console.error(
+        error.code === "EADDRINUSE"
+          ? `Error: port ${port} is already in use (another Leafdock or Docker container?). Stop it or use --port <number>.`
+          : "Error: " + error.message,
+      );
+      process.exit(1);
+    }
+    console.log("Leafdock running at http://localhost:" + port);
     console.log(
-      "Leafdock running at http://localhost:" + (process.env.PORT || 3000),
-    ),
-  );
+      "PAT configured: " +
+        (envPat
+          ? "Yes (" + (cli.pat ? "CLI argument" : "environment") + ")"
+          : "No (token wizard will prompt when opening a PR)"),
+    );
+    if (initialPrUrl) {
+      console.log("Initial PR: " + initialPrUrl);
+      app.locals.ensureDefaultSession?.().catch((err) => {
+        console.warn("Could not preload PR: " + err.message);
+      });
+    }
+  });
+}

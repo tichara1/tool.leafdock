@@ -4,8 +4,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
-import { createApp } from "./index.js";
-import { parsePrUrl, loadPr, readItem } from "./azure.js";
+import { createApp, parseCliArgs } from "./index.js";
+import {
+  parsePrUrl,
+  loadPr,
+  readItem,
+  isEntraToken,
+  authorization,
+} from "./azure.js";
 import { Store, reviewKey } from "./store.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -340,4 +346,196 @@ test("publishing uses merge-base iteration and is idempotent", async (t) => {
   );
   assert.equal(payload.threadContext.rightFileStart.line, 8);
   assert.match(payload.comments[0].content, /> attempts: 3/);
+});
+test("Entra ID tokens use Bearer and PATs use Basic authentication", () => {
+  const jwt = "eyJhbGciOiJSUzI1NiJ9.eyJhdWQiOiJ4In0.c2lnbmF0dXJl";
+  assert.equal(isEntraToken(jwt), true);
+  assert.equal(authorization(jwt), "Bearer " + jwt);
+  assert.equal(
+    authorization("patvalue"),
+    "Basic " + Buffer.from(":patvalue").toString("base64"),
+  );
+});
+test("environment token can be replaced at runtime only with the MCP token", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "leafdock-admin-")),
+    app = createApp({ dataDir: dir, envPat: "", envOrg: "" });
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const base = "http://127.0.0.1:" + server.address().port;
+  t.after(async () => {
+    await new Promise((r) => server.close(r));
+    await rm(dir, { recursive: true });
+  });
+  const put = (headers, body) =>
+    fetch(base + "/api/admin/token", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    });
+  assert.equal((await put({}, { token: "x" })).status, 401);
+  assert.equal(
+    (await put({ Authorization: "Bearer wrong" }, { token: "x" })).status,
+    401,
+  );
+  const auth = { Authorization: "Bearer " + app.locals.mcp.token };
+  assert.equal((await put(auth, {})).status, 400);
+  const response = await put(auth, { token: "pat", organization: "acme" });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    organization: "acme",
+    type: "pat",
+  });
+  assert.deepEqual(await (await fetch(base + "/api/config")).json(), {
+    hasPat: true,
+    organization: "acme",
+  });
+});
+test("CLI argument parsing handles named options, positionals and defaults", () => {
+  assert.deepEqual(
+    parseCliArgs([
+      "--url",
+      "https://dev.azure.com/o/p/_git/r/pullrequest/1",
+      "--pat",
+      "secret",
+      "--org",
+      "o",
+      "--port",
+      "8080",
+    ]),
+    {
+      url: "https://dev.azure.com/o/p/_git/r/pullrequest/1",
+      pat: "secret",
+      org: "o",
+      port: 8080,
+      help: false,
+    },
+  );
+  // URL then PAT
+  assert.deepEqual(
+    parseCliArgs([
+      "https://dev.azure.com/o/p/_git/r/pullrequest/2",
+      "pat-token",
+    ]),
+    {
+      url: "https://dev.azure.com/o/p/_git/r/pullrequest/2",
+      pat: "pat-token",
+      org: "",
+      port: undefined,
+      help: false,
+    },
+  );
+  // PAT only (positional)
+  assert.deepEqual(parseCliArgs(["only-pat-token"]), {
+    url: "",
+    pat: "only-pat-token",
+    org: "",
+    port: undefined,
+    help: false,
+  });
+  // PAT then URL (reversed positionals)
+  assert.deepEqual(
+    parseCliArgs([
+      "only-pat-token",
+      "https://dev.azure.com/o/p/_git/r/pullrequest/3",
+    ]),
+    {
+      url: "https://dev.azure.com/o/p/_git/r/pullrequest/3",
+      pat: "only-pat-token",
+      org: "",
+      port: undefined,
+      help: false,
+    },
+  );
+  // Named flags and aliases
+  assert.deepEqual(parseCliArgs(["--token", "token-val"]), {
+    url: "",
+    pat: "token-val",
+    org: "",
+    port: undefined,
+    help: false,
+  });
+  assert.deepEqual(parseCliArgs(["-p", "token-p"]), {
+    url: "",
+    pat: "token-p",
+    org: "",
+    port: undefined,
+    help: false,
+  });
+  assert.deepEqual(parseCliArgs(["--pat=token-eq"]), {
+    url: "",
+    pat: "token-eq",
+    org: "",
+    port: undefined,
+    help: false,
+  });
+  assert.deepEqual(parseCliArgs(["pat=token-direct"]), {
+    url: "",
+    pat: "token-direct",
+    org: "",
+    port: undefined,
+    help: false,
+  });
+  assert.equal(parseCliArgs(["-h"]).help, true);
+});
+test("initial PR URL and PAT auto-connect session and expose config", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "leafdock-init-pr-")),
+    initialPrUrl = "https://dev.azure.com/o/p/_git/r/pullrequest/1",
+    app = createApp({
+      dataDir: dir,
+      envPat: "test-pat",
+      envOrg: "o",
+      initialPrUrl,
+    });
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const base = "http://127.0.0.1:" + server.address().port;
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    const urlStr = String(url);
+    if (!urlStr.startsWith("https://dev.azure.com/")) {
+      return original(url, options);
+    }
+    const u = new URL(urlStr);
+    const route = u.pathname;
+    if (route.endsWith("/iterations"))
+      return Response.json({
+        value: [
+          {
+            id: 1,
+            sourceRefCommit: { commitId: "head" },
+            commonRefCommit: { commitId: "base" },
+          },
+        ],
+      });
+    if (route.endsWith("/changes"))
+      return Response.json({
+        changeEntries: [{ item: { path: "/a.md" }, changeType: "edit" }],
+        nextSkip: 0,
+      });
+    return Response.json({
+      title: "PR Title",
+      sourceRefName: "refs/heads/docs",
+      targetRefName: "refs/heads/main",
+      createdBy: { displayName: "Author" },
+      status: "active",
+    });
+  };
+  t.after(async () => {
+    globalThis.fetch = original;
+    await new Promise((r) => server.close(r));
+    await rm(dir, { recursive: true });
+  });
+
+  const config = await (await fetch(base + "/api/config")).json();
+  assert.equal(config.hasPat, true);
+  assert.equal(config.initialPrUrl, initialPrUrl);
+
+  const prResponse = await fetch(base + "/api/pr");
+  assert.equal(prResponse.status, 200);
+  const cookie = prResponse.headers.get("set-cookie");
+  assert.match(cookie, /leafdock_session=/);
+  const data = await prResponse.json();
+  assert.equal(data.pr.title, "PR Title");
 });
