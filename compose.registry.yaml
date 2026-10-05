@@ -7,6 +7,7 @@ services:
     environment:
       AZURE_DEVOPS_PAT: ${AZURE_DEVOPS_PAT:-}
       AZURE_DEVOPS_ORG: ${AZURE_DEVOPS_ORG:-}
+      AZURE_DEVOPS_PR: ${AZURE_DEVOPS_PR:-}
       LEAFDOCK_MCP_TOKEN: ${LEAFDOCK_MCP_TOKEN:-}
       MCP_ALLOW_PUBLISH: ${MCP_ALLOW_PUBLISH:-false}
       DATA_DIR: /app/data

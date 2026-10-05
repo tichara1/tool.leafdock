@@ -27,6 +27,8 @@ import {
   RefreshCw,
   PanelRightClose,
   PanelRightOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
   Quote,
   Send,
   Sun,
@@ -51,6 +53,7 @@ import { Document } from "./render.jsx";
 import { McpDialog } from "./mcp.jsx";
 import { DOCUMENT_MODES, ShortcutsDialog } from "./shortcuts.jsx";
 import { RecentDialog, RecentList } from "./recent.jsx";
+import { highlightLines } from "./highlight.js";
 import "./styles.css";
 
 export async function api(url, options = {}) {
@@ -146,9 +149,15 @@ function Connect({ onConnect, theme, setTheme, initialUrl = "" }) {
   const [recent, setRecent] = useState([]);
   useEffect(() => {
     api("/config")
-      .then(setConfig)
+      .then((cfg) => {
+        setConfig(cfg);
+        if (!url && cfg?.initialPrUrl) setUrl(cfg.initialPrUrl);
+      })
       .catch((e) => setError(e.message));
   }, []);
+  useEffect(() => {
+    if (initialUrl && !url) setUrl(initialUrl);
+  }, [initialUrl]);
   useEffect(() => {
     api("/recent")
       .then((result) => setRecent(result.items))
@@ -251,6 +260,11 @@ function Connect({ onConnect, theme, setTheme, initialUrl = "" }) {
                 Choose a short expiry. DevOps does not document a URL for
                 prefilling this form.
               </p>
+              <p className="muted">
+                Prefer the command line? With the Azure CLI signed in, run{" "}
+                <code>npm run token -- --org {wizard.organization} --push</code>{" "}
+                to create the token and apply it without this form.
+              </p>
               <a href={wizard.url} target="_blank" rel="noreferrer">
                 Open token settings <ExternalLink size={13} />
               </a>
@@ -272,8 +286,7 @@ function Connect({ onConnect, theme, setTheme, initialUrl = "" }) {
           )}
           {config?.hasPat && (
             <p className="connection-state">
-              <CheckCircle2 size={15} /> Token configured through the
-              environment
+              <CheckCircle2 size={15} /> Token configured (CLI / environment)
               {config.organization ? " · " + config.organization : ""}
             </p>
           )}
@@ -352,6 +365,17 @@ function fileKind(path) {
       ? "HTML"
       : "CODE";
 }
+const CHANGES = {
+  add: ["A", "Added"],
+  delete: ["D", "Deleted"],
+  rename: ["R", "Renamed"],
+  edit: ["M", "Modified"],
+};
+function changeKind(change) {
+  return (
+    ["add", "delete", "rename"].find((kind) => change.includes(kind)) || "edit"
+  );
+}
 function FileRow({
   file,
   active,
@@ -363,24 +387,28 @@ function FileRow({
 }) {
   return (
     <div
-      className={"file-row " + (active ? "selected" : "")}
+      className={
+        "file-row change-" +
+        changeKind(file.change) +
+        (active ? " selected" : "")
+      }
       style={{ paddingLeft: 12 + depth * 14 }}
+      onClick={() => onSelect(file.path)}
     >
       <button
         className={"file-check " + (reviewed ? "checked" : "")}
         aria-label={
           (reviewed ? "Mark unreviewed: " : "Mark reviewed: ") + file.path
         }
-        onClick={() => onReview(file.path, !reviewed)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onReview(file.path, !reviewed);
+        }}
         aria-pressed={reviewed}
       >
         {reviewed ? <Check size={12} /> : null}
       </button>
-      <button
-        className="file-name"
-        title={file.path}
-        onClick={() => onSelect(file.path)}
-      >
+      <button className="file-name" title={file.path}>
         <span className={"file-type " + fileKind(file.path).toLowerCase()}>
           {fileKind(file.path) === "HTML" ? (
             <Code2 size={15} />
@@ -397,14 +425,8 @@ function FileRow({
           )}
         </span>
       </button>
-      <span className={"change-tag " + file.change} title={file.change}>
-        {file.change.includes("add")
-          ? "A"
-          : file.change.includes("delete")
-            ? "D"
-            : file.change.includes("rename")
-              ? "R"
-              : "M"}
+      <span className="change-tag" title={CHANGES[changeKind(file.change)][1]}>
+        {CHANGES[changeKind(file.change)][0]}
       </span>
     </div>
   );
@@ -484,7 +506,26 @@ function Tree({
   );
 }
 
-export function SourceDiff({ file, unified, onQuote }) {
+// Highlighted HTML comes from highlight.js, which escapes the source text.
+function CodeLine({ html, text }) {
+  return html ? (
+    <code dangerouslySetInnerHTML={{ __html: html }} />
+  ) : (
+    <code>{text || " "}</code>
+  );
+}
+export function SourceDiff({ file, path, unified, onQuote }) {
+  const highlighted = useMemo(
+    () => ({
+      before: highlightLines(file.before, file.originalPath || path),
+      after: highlightLines(file.after, path),
+    }),
+    [file, path],
+  );
+  const html = (row, side) =>
+    side === "before"
+      ? highlighted.before?.[row.left - 1]
+      : highlighted.after?.[row.right - 1];
   const rows = useMemo(() => {
     let left = 0,
       right = 0;
@@ -527,7 +568,10 @@ export function SourceDiff({ file, unified, onQuote }) {
             <span className="diff-sign">
               {row.type === "added" ? "+" : row.type === "removed" ? "-" : " "}
             </span>
-            <code>{row.text || " "}</code>
+            <CodeLine
+              html={html(row, row.type === "removed" ? "before" : "after")}
+              text={row.text}
+            />
           </div>
         ))}
       </div>
@@ -564,7 +608,7 @@ export function SourceDiff({ file, unified, onQuote }) {
               {row ? (
                 <>
                   {line(row, side)}
-                  <code>{row.text || " "}</code>
+                  <CodeLine html={html(row, side)} text={row.text} />
                 </>
               ) : (
                 <span>&nbsp;</span>
@@ -724,7 +768,12 @@ export function App() {
     [mode, setMode] = useLocal("leafdock-mode", "preview"),
     [search, setSearch] = useState(""),
     [filter, setFilter] = useState("all"),
-    [notesOpen, setNotesOpen] = useState(true),
+    [notesOpen, setNotesOpen] = useLocal(
+      "leafdock-notes",
+      window.innerWidth > 980,
+    ),
+    [sidebarOpen, setSidebarOpen] = useLocal("leafdock-sidebar", true),
+    [anchor, setAnchor] = useState(null),
     [navOpen, setNavOpen] = useState(false),
     [share, setShare] = useState(false),
     [toast, setToast] = useState(""),
@@ -748,7 +797,14 @@ export function App() {
   }, [theme]);
   useEffect(() => {
     const update = () => {
-      const active = document.fullscreenElement === workspaceRef.current;
+      const element = document.fullscreenElement;
+      if (
+        element &&
+        element !== workspaceRef.current &&
+        workspaceRef.current?.contains(element)
+      )
+        return;
+      const active = element === workspaceRef.current;
       setFullscreen(active);
       if (wasFullscreen.current && !active) setFocused(previousFocus.current);
       wasFullscreen.current = active;
@@ -790,6 +846,16 @@ export function App() {
       setNotesOpen(true);
     } else setNotesOpen((value) => !value);
   }
+  function toggleSidebar() {
+    if (window.innerWidth <= 700) {
+      setNavOpen((value) => !value);
+      return;
+    }
+    if (focused) {
+      setFocused(false);
+      setSidebarOpen(true);
+    } else setSidebarOpen((value) => !value);
+  }
   function focusSearch() {
     setFocused(false);
     if (window.innerWidth <= 700) setNavOpen(true);
@@ -808,14 +874,36 @@ export function App() {
     setAllNotes(false);
   };
   useEffect(() => {
-    const demo = new URLSearchParams(window.location.search).has("demo");
-    (demo
-      ? api("/connect", { method: "POST", body: { demo: true } })
-      : api("/pr")
-    )
-      .then(accept)
-      .catch(() => {})
-      .finally(() => setStarting(false));
+    const params = new URLSearchParams(window.location.search);
+    const demo = params.has("demo");
+    const queryUrl = params.get("url") || params.get("pr");
+    if (demo) {
+      api("/connect", { method: "POST", body: { demo: true } })
+        .then(accept)
+        .catch(() => {})
+        .finally(() => setStarting(false));
+    } else if (queryUrl) {
+      api("/connect", { method: "POST", body: { url: queryUrl } })
+        .then(accept)
+        .catch((e) => {
+          if (e?.code === "PAT_REQUIRED") {
+            setConnectUrl(queryUrl);
+          }
+        })
+        .finally(() => setStarting(false));
+    } else {
+      api("/pr")
+        .then(accept)
+        .catch(async () => {
+          try {
+            const cfg = await api("/config");
+            if (cfg?.initialPrUrl) {
+              setConnectUrl(cfg.initialPrUrl);
+            }
+          } catch {}
+        })
+        .finally(() => setStarting(false));
+    }
     return () => clearTimeout(toastTimer.current);
   }, []);
   useEffect(() => {
@@ -921,13 +1009,14 @@ export function App() {
       notify(e.message);
     }
   }
-  function select(path) {
+  function select(path, hash = "") {
     if (noteText.trim() && path !== selected) {
       notify(
         "Your draft belongs to the original file. Save or clear it before switching files.",
       );
       return;
     }
+    setAnchor(hash ? { path, hash } : null);
     setSelected(path);
     setNavOpen(false);
   }
@@ -994,6 +1083,11 @@ export function App() {
       if (key === "t") {
         e.preventDefault();
         setTree((value) => !value);
+        return;
+      }
+      if (key === "b") {
+        e.preventDefault();
+        toggleSidebar();
         return;
       }
       if (key === "q") {
@@ -1146,6 +1240,13 @@ export function App() {
         !review.notes.some((n) => n.threadId === t.id),
     );
   const changed = diffLines(file?.before || "", file?.after || "");
+  const sourceLines =
+    mode === "source" && file
+      ? highlightLines(
+          file.after || file.before,
+          file.after ? selected : file.originalPath,
+        )
+      : null;
   const added = changed
       .filter((p) => p.added)
       .reduce((n, p) => n + (p.count || 0), 0),
@@ -1156,7 +1257,11 @@ export function App() {
   return (
     <div
       ref={workspaceRef}
-      className={"workspace" + (focused ? " focus-mode" : "")}
+      className={
+        "workspace" +
+        (focused ? " focus-mode" : "") +
+        (sidebarOpen ? "" : " sidebar-hidden")
+      }
     >
       <header className="topbar">
         <IconButton
@@ -1171,6 +1276,33 @@ export function App() {
           {pr.repo}
           <ChevronRight size={13} />
           <span>PR #{pr.id}</span>
+        </div>
+        <div className="pr-header">
+          <span className="badge status-badge">
+            <span className="status-dot" />
+            {pr.status === "active" ? "OPEN PR" : pr.status.toUpperCase()}
+          </span>
+          <h1 title={pr.title}>{pr.title}</h1>
+          <a
+            href={pr.url}
+            target="_blank"
+            rel="noreferrer"
+            title="Open in Azure DevOps"
+            className="pr-link"
+          >
+            <ExternalLink size={14} />
+          </a>
+          <div className="branches">
+            <span className="pr-author">{pr.author}</span>
+            <GitBranch size={14} />
+            <code title={pr.source}>{pr.source}</code>
+            <ArrowRight size={12} />
+            <code title={pr.target}>{pr.target}</code>
+            <span className="pr-iteration">· Iteration {pr.iteration}</span>
+            <span className="commit-id" title={pr.after}>
+              {pr.after.slice(0, 8)}
+            </span>
+          </div>
         </div>
         <div className="top-actions">
           <IconButton
@@ -1231,6 +1363,13 @@ export function App() {
               PR FILES <span>{pr.files.length}</span>
             </div>
             <div className="view-switch">
+              <IconButton
+                icon={PanelLeftClose}
+                label="Hide files (B)"
+                aria-keyshortcuts="b"
+                className="icon-button sidebar-hide"
+                onClick={toggleSidebar}
+              />
               <IconButton
                 icon={FolderTree}
                 label="Folder tree"
@@ -1324,36 +1463,16 @@ export function App() {
           </div>
         </aside>
         <main className="main-pane">
-          <section className="pr-header">
-            <div className="pr-meta">
-              <span className="badge status-badge">
-                <span className="status-dot" />
-                {pr.status === "active" ? "OPEN PR" : pr.status.toUpperCase()}
-              </span>
-              <span>{pr.author}</span>
-              <a
-                href={pr.url}
-                target="_blank"
-                rel="noreferrer"
-                title="Open in Azure DevOps"
-              >
-                <ExternalLink size={14} />
-              </a>
-            </div>
-            <h1>{pr.title}</h1>
-            <div className="branches">
-              <GitBranch size={14} />
-              <code>{pr.source}</code>
-              <ArrowRight size={12} />
-              <code>{pr.target}</code>
-              <span>·</span>
-              <span>Iteration {pr.iteration}</span>
-              <span className="commit-id" title={pr.after}>
-                {pr.after.slice(0, 8)}
-              </span>
-            </div>
-          </section>
           <div className="document-toolbar">
+            {!sidebarOpen && (
+              <IconButton
+                icon={PanelLeftOpen}
+                label="Show files (B)"
+                aria-keyshortcuts="b"
+                className="icon-button sidebar-show"
+                onClick={toggleSidebar}
+              />
+            )}
             <div className="breadcrumb">
               <FileText size={16} />
               <span>{selected || "No changed files"}</span>
@@ -1487,15 +1606,32 @@ export function App() {
                 {label}
               </button>
             ))}
-            <span className="render-label">
+            <span
+              className="render-label"
+              title={
+                fileKind(selected) === "HTML"
+                  ? "Original styles in an isolated frame. Select text and click “Quote selection”. Document scripts do not run."
+                  : undefined
+              }
+            >
               {fileKind(selected) === "MD"
                 ? "MARKDOWN + MERMAID"
                 : fileKind(selected) === "HTML"
-                  ? "HTML PREVIEW"
+                  ? "HTML PREVIEW · SCRIPTS OFF"
                   : "TEXT"}
             </span>
           </nav>
-          <div className={"reader mode-" + mode} ref={readerRef}>
+          <div
+            className={
+              "reader mode-" +
+              mode +
+              (fileKind(selected) === "HTML" &&
+              (mode === "preview" || mode === "visual")
+                ? " reader-html"
+                : "")
+            }
+            ref={readerRef}
+          >
             {loading ? (
               <div className="reader-message">
                 <Spinner />
@@ -1529,6 +1665,7 @@ export function App() {
                       }
                       side={file.change.includes("delete") ? "before" : "after"}
                       theme={theme}
+                      anchor={anchor?.path === selected ? anchor : null}
                       onNavigate={select}
                       onQuote={captureQuote}
                     />
@@ -1550,6 +1687,7 @@ export function App() {
                               content={file[side]}
                               side={side}
                               theme={theme}
+                              anchor={anchor?.path === selected ? anchor : null}
                               onNavigate={select}
                               onQuote={captureQuote}
                             />
@@ -1578,13 +1716,14 @@ export function App() {
                         >
                           {i + 1}
                         </button>
-                        <code>{line || " "}</code>
+                        <CodeLine html={sourceLines?.[i]} text={line} />
                       </div>
                     ))}
                   </div>
                 ) : (
                   <SourceDiff
                     file={file}
+                    path={selected}
                     unified={mode === "unified"}
                     onQuote={captureQuote}
                   />

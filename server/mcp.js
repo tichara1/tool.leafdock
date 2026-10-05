@@ -49,11 +49,14 @@ export function installMcp(
     settings.publish = req.body.publish;
     res.json({ publish: settings.publish });
   });
-  app.all("/mcp", async (req, res) => {
+  function authorized(req) {
     const supplied = (req.get("authorization") || "").replace(/^Bearer /, "");
     const a = Buffer.from(supplied),
       b = Buffer.from(settings.token);
-    if (a.length !== b.length || !timingSafeEqual(a, b))
+    return a.length === b.length && timingSafeEqual(a, b);
+  }
+  app.all("/mcp", async (req, res) => {
+    if (!authorized(req))
       return res.status(401).json({ error: "MCP token required" });
     const origin = req.get("origin");
     if (origin && new URL(origin).host !== req.get("host"))
@@ -261,4 +264,5 @@ export function installMcp(
     }
   });
   app.locals.mcp = settings;
+  return { authorized };
 }

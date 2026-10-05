@@ -4,13 +4,14 @@ import path from "node:path";
 
 // Only production dependencies are distributed. No local absolute paths,
 // credentials, or environment values appear in the generated document.
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const directories = execFileSync(
-  "npm",
+  npmCommand,
   ["ls", "--omit=dev", "--all", "--parseable"],
-  { encoding: "utf8" },
+  { encoding: "utf8", shell: process.platform === "win32" },
 )
   .trim()
-  .split("\n")
+  .split(/\r?\n/)
   .slice(1);
 const entries = new Map();
 for (const directory of directories) {

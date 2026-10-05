@@ -142,10 +142,7 @@ test("HTML scripts are blocked while selection quote bridge works", async ({
 test("mobile navigation and notes remain usable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/?demo=1");
-  await page
-    .getByRole("button", { name: "Hide notes", exact: true })
-    .last()
-    .click();
+  await expect(page.locator(".notes-pane")).toHaveCount(0);
   await page.getByRole("button", { name: "Show files", exact: true }).click();
   await expect(page.locator(".sidebar.mobile-open")).toBeVisible();
   await page.getByRole("button", { name: "runbook.md", exact: true }).click();
@@ -349,4 +346,137 @@ test("background poll detects a remote push without replacing the document", asy
   await expect(
     page.getByRole("heading", { name: "Documentation update", exact: true }),
   ).toHaveCount(0);
+});
+
+test("HTML links scroll to anchors, open other files at their section and keep form controls", async ({
+  page,
+}) => {
+  await page.route(
+    "**/api/file?path=%2Fdocs%2Foverview.html",
+    async (route) => {
+      const r = await route.fetch();
+      const json = await r.json();
+      json.after =
+        '<a id="toc" href="#target">Jump</a> <a id="deep" href="architecture.md#next-steps">Next steps</a>' +
+        '<p><button id="tab">Tab A</button><input id="check" type="checkbox" checked></p>' +
+        '<div style="height:2500px"></div><h2 id="target">Target</h2>';
+      await route.fulfill({ response: r, json });
+    },
+  );
+  await page.goto("/?demo=1");
+  await page
+    .getByRole("button", { name: "overview.html", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Preview", exact: true }).click();
+  const frame = page.frameLocator('iframe[title="HTML preview after"]');
+  await expect(frame.locator("#tab")).toBeVisible();
+  await expect(frame.locator("#check")).toBeVisible();
+  await frame.locator("#toc").click();
+  await expect
+    .poll(() => frame.locator("body").evaluate(() => window.scrollY))
+    .toBeGreaterThan(1000);
+  await expect(page.locator(".breadcrumb")).toContainText(
+    "/docs/overview.html",
+  );
+  await frame.locator("#deep").click();
+  await expect(page.locator(".breadcrumb")).toContainText(
+    "/docs/architecture.md",
+  );
+  await expect
+    .poll(() => page.locator(".reader").evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(300);
+});
+
+test("Mermaid zoom is relative to the natural size and can be reset to fit", async ({
+  page,
+}) => {
+  await page.goto("/?demo=1");
+  await page.getByRole("button", { name: "runbook.md", exact: true }).click();
+  await page.getByRole("button", { name: "Preview", exact: true }).click();
+  const canvas = page.locator(".mermaid-svg");
+  await expect(canvas.locator("svg")).toBeVisible();
+  const zoom = page.locator(".zoom-level");
+  await expect(zoom).toHaveText("100%");
+  const fitted = await canvas.boundingBox();
+  const card = await page.locator(".diagram-scroll").boundingBox();
+  expect(fitted.width).toBeLessThan(card.width);
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await expect(zoom).toHaveText("125%");
+  const zoomed = await canvas.boundingBox();
+  expect(zoomed.width / fitted.width).toBeCloseTo(1.25, 1);
+  const scroll = page.locator(".diagram-scroll");
+  const box = await scroll.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.keyboard.down("Control");
+  await page.mouse.wheel(0, -300);
+  await page.keyboard.up("Control");
+  await expect(zoom).not.toHaveText("125%");
+  await page
+    .getByRole("button", { name: "Fit diagram to view", exact: true })
+    .click();
+  await expect(zoom).toHaveText("100%");
+});
+
+test("file sidebar collapses with B and the button to give the preview more room", async ({
+  page,
+}) => {
+  await page.goto("/?demo=1");
+  const reader = page.locator(".reader");
+  const width = (await reader.boundingBox()).width;
+  await page.locator(".breadcrumb").click();
+  await page.keyboard.press("b");
+  await expect(page.locator(".sidebar")).toBeHidden();
+  expect((await reader.boundingBox()).width).toBeGreaterThan(width + 200);
+  await page.reload();
+  await expect(page.locator(".sidebar")).toBeHidden();
+  await page
+    .getByRole("button", { name: "Show files (B)", exact: true })
+    .click();
+  await expect(page.locator(".sidebar")).toBeVisible();
+});
+
+test("clicking anywhere on a file row opens the file, the checkbox only marks it reviewed", async ({
+  page,
+}) => {
+  await page.goto("/?demo=1");
+  await expect(page.locator(".topbar .pr-header h1")).toHaveText(
+    "New platform architecture documentation",
+  );
+  const row = page.locator(".file-row").filter({ hasText: "runbook.md" });
+  const box = await row.boundingBox();
+  await page.mouse.click(box.x + box.width - 6, box.y + box.height / 2);
+  await expect(page.locator(".breadcrumb")).toContainText("/docs/runbook.md");
+  const check = page
+    .locator(".file-row")
+    .filter({ hasText: "overview.html" })
+    .locator(".file-check");
+  const reviewed = (await check.getAttribute("aria-pressed")) === "true";
+  await check.click();
+  await expect(check).toHaveAttribute("aria-pressed", String(!reviewed));
+  await expect(page.locator(".breadcrumb")).toContainText("/docs/runbook.md");
+});
+
+test("file list colours change types and source views are syntax highlighted", async ({
+  page,
+}) => {
+  await page.goto("/?demo=1");
+  await expect(
+    page.locator(".file-row.change-add").filter({ hasText: "runbook.md" }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".file-row.change-edit").filter({ hasText: "overview.html" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await expect(page.locator(".source-view .hljs-section").first()).toHaveText(
+    "# Platform architecture",
+  );
+  await page.getByRole("button", { name: "Split diff", exact: true }).click();
+  await expect(
+    page.locator(".split-source .hljs-section").first(),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "overview.html", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Unified diff", exact: true }).click();
+  await expect(page.locator(".unified .hljs-tag").first()).toBeVisible();
 });

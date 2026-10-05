@@ -47,7 +47,7 @@ test("both deployment configurations bind to loopback and use persistent data", 
 });
 test("application source, built-in demo and tests have no untranslated Czech strings", () => {
   const pattern =
-    /[áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]|\b(Konfigurace|SOUBORY V PR|Iterace)\b/;
+    /[áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]|\b(Konfigurace|SOUBORY V PR|Iterace|Soubor|nebyl|nalezen)\b/;
   for (const dir of ["src", "server", "tests"])
     for (const file of readdirSync(dir)) {
       if (/\.(jsx?|css)$/.test(file))

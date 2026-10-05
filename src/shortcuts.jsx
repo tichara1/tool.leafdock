@@ -14,6 +14,7 @@ export const SHORTCUTS = [
   ["J / K", "Next / previous file"],
   ["1–5", "Preview / visual / split / unified diff / source"],
   ["N", "Show / hide notes"],
+  ["B", "Show / hide the file sidebar"],
   ["T", "Switch folder tree / list"],
   ["R", "Mark reviewed / unreviewed"],
   ["Q", "Quote selected text"],

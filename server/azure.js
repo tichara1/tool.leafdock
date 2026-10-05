@@ -62,6 +62,16 @@ export function parsePrUrl(input) {
 export function repoBase(pr) {
   return `https://dev.azure.com/${encodeURIComponent(pr.org)}/${encodeURIComponent(pr.project)}/_apis/git/repositories/${encodeURIComponent(pr.repo)}`;
 }
+// Entra ID access tokens (e.g. from `az account get-access-token`) are JWTs and
+// use Bearer; personal access tokens use Basic with an empty user name.
+export function isEntraToken(token) {
+  return /^eyJ[\w-]*\.[\w-]+\.[\w-]*$/.test(token);
+}
+export function authorization(token) {
+  return isEntraToken(token)
+    ? `Bearer ${token}`
+    : `Basic ${Buffer.from(":" + token).toString("base64")}`;
+}
 export async function azure(pr, token, route, params = {}, options = {}) {
   const url = new URL(repoBase(pr) + route);
   url.search = new URLSearchParams({
@@ -73,7 +83,7 @@ export async function azure(pr, token, route, params = {}, options = {}) {
     response = await fetch(url, {
       ...options,
       headers: {
-        Authorization: `Basic ${Buffer.from(":" + token).toString("base64")}`,
+        Authorization: authorization(token),
         Accept: "application/json",
         ...options.headers,
       },
