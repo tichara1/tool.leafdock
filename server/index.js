@@ -761,7 +761,16 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     );
 
   const app = createApp({ envPat, envOrg, initialPrUrl });
-  app.listen(port, "0.0.0.0", () => {
+  // Express 5 passes listen errors (e.g. EADDRINUSE) to this callback.
+  app.listen(port, "0.0.0.0", (error) => {
+    if (error) {
+      console.error(
+        error.code === "EADDRINUSE"
+          ? `Error: port ${port} is already in use (another Leafdock or Docker container?). Stop it or use --port <number>.`
+          : "Error: " + error.message,
+      );
+      process.exit(1);
+    }
     console.log("Leafdock running at http://localhost:" + port);
     console.log(
       "PAT configured: " +
