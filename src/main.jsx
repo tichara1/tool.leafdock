@@ -13,7 +13,6 @@ import {
   ChevronDown,
   Folder,
   FileText,
-  Code2,
   List,
   FolderTree,
   MessageSquare,
@@ -365,6 +364,57 @@ function fileKind(path) {
       ? "HTML"
       : "CODE";
 }
+const FILE_TYPES = {
+  md: ["MD", "#4f8fd6"],
+  mdx: ["MD", "#4f8fd6"],
+  html: ["HTML", "#e0743c"],
+  htm: ["HTML", "#e0743c"],
+  cs: ["C#", "#8a5fd0"],
+  csproj: ["PROJ", "#8a5fd0"],
+  sln: ["SLN", "#8a5fd0"],
+  js: ["JS", "#c9a400"],
+  jsx: ["JSX", "#1ba5c4"],
+  mjs: ["JS", "#c9a400"],
+  cjs: ["JS", "#c9a400"],
+  ts: ["TS", "#3178c6"],
+  tsx: ["TSX", "#3178c6"],
+  json: ["{}", "#b08a2e"],
+  css: ["CSS", "#2f9e6b"],
+  scss: ["SCSS", "#d0578e"],
+  yml: ["YML", "#cb4b4b"],
+  yaml: ["YML", "#cb4b4b"],
+  xml: ["XML", "#d0803c"],
+  py: ["PY", "#3b7cb8"],
+  java: ["JAVA", "#c0522f"],
+  go: ["GO", "#1ba5c4"],
+  rs: ["RS", "#b5532a"],
+  sql: ["SQL", "#6b8ba4"],
+  sh: ["SH", "#5f9a4a"],
+  ps1: ["PS", "#3b6fb8"],
+  png: ["IMG", "#a35fb5"],
+  jpg: ["IMG", "#a35fb5"],
+  jpeg: ["IMG", "#a35fb5"],
+  gif: ["IMG", "#a35fb5"],
+  svg: ["SVG", "#a35fb5"],
+  txt: ["TXT", "#7d8590"],
+};
+function FileIcon({ path }) {
+  const name = path.split("/").at(-1),
+    ext = name.includes(".") ? name.split(".").at(-1).toLowerCase() : "",
+    [label, color] = FILE_TYPES[ext] ?? [
+      (ext || "·").slice(0, 3).toUpperCase(),
+      "#7d8590",
+    ];
+  return (
+    <span
+      className="file-type"
+      style={{ "--type-color": color }}
+      title={ext ? "." + ext : "No extension"}
+    >
+      {label}
+    </span>
+  );
+}
 const CHANGES = {
   add: ["A", "Added"],
   delete: ["D", "Deleted"],
@@ -409,13 +459,7 @@ function FileRow({
         {reviewed ? <Check size={12} /> : null}
       </button>
       <button className="file-name" title={file.path}>
-        <span className={"file-type " + fileKind(file.path).toLowerCase()}>
-          {fileKind(file.path) === "HTML" ? (
-            <Code2 size={15} />
-          ) : (
-            <FileText size={15} />
-          )}
-        </span>
+        <FileIcon path={file.path} />
         <span>
           {file.path.split("/").at(-1)}
           {list && (

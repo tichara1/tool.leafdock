@@ -733,15 +733,14 @@ kbd {
   text-overflow: ellipsis;
 }
 .file-type {
-  color: var(--muted);
-  display: flex;
   flex-shrink: 0;
-}
-.file-type.md {
-  color: var(--accent);
-}
-.file-type.html {
-  color: #b0895c;
+  min-width: 26px;
+  padding: 2px 3px;
+  border-radius: 4px;
+  font: 700 8px/1.2 monospace;
+  text-align: center;
+  color: var(--type-color);
+  background: color-mix(in srgb, var(--type-color) 16%, transparent);
 }
 .file-row {
   --change: var(--change-edit);
