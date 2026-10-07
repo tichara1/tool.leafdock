@@ -18,6 +18,11 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+On Windows, run `./run.ps1` from PowerShell. It creates `.env` only when
+missing, builds and starts Leafdock, and waits for its health check. Repeated
+runs reuse the same service and preserve your configuration and saved reviews.
+Docker Desktop must be running.
+
 You can also pass `AZURE_DEVOPS_PAT` (and `AZURE_DEVOPS_PR`) directly when starting Docker Compose:
 
 ```sh
